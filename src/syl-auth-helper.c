@@ -483,7 +483,16 @@ int main(int argc, char *argv[])
 	g_string_append(auth_uri, "&access_type=offline");
 
 	debug_print("url: %s\n", auth_uri->str);
+	//chromium prints "Opening in existing browser session." on
+	//stdout, which must be prevented from appearing on this
+	//program's stdout, because later the token will be printed
+	//on stdout.
+	int original_stdout_fd = dup(fileno(stdout));
+	freopen("/dev/null", "w", stdout);
 	open_uri(auth_uri->str, NULL);
+	dup2(original_stdout_fd, fileno(stdout));
+	close(original_stdout_fd);
+	//freopen("CON", "w", stdout);//for windows, needs testing
 	g_string_free(auth_uri, TRUE);
 
 	code = http_redirect_accept(api->local_port, state);
