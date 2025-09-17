@@ -514,9 +514,11 @@ int main(int argc, char *argv[])
 	g_string_append_printf(req_body, "&redirect_uri=%s", tmp);
 	curl_free(tmp);
 	g_string_append(req_body, "&grant_type=authorization_code");
-	tmp = curl_easy_escape(curl, api->client_secret, 0);
-	g_string_append_printf(req_body, "&client_secret=%s", tmp);
-	curl_free(tmp);
+	if (api->client_secret) {
+		tmp = curl_easy_escape(curl, api->client_secret, 0);
+		g_string_append_printf(req_body, "&client_secret=%s", tmp);
+		curl_free(tmp);
+	}
 
 	body = http_post(api->token_uri, req_body->str, &header);
 	if (!header && !body) {
