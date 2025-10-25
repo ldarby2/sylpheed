@@ -48,6 +48,7 @@ typedef struct _APIInfo
 	gchar *client_secret;
 	gchar *scope;
 	gint local_port;
+	gint use_pkce;
 } APIInfo;
 
 typedef struct _TokenData
@@ -343,6 +344,7 @@ static APIInfo *get_api_info(GKeyFile *key_file, const gchar *address)
 		api->local_port = g_key_file_get_integer(key_file, group, "local_port", NULL);
 		if (api->local_port == 0)
 			api->local_port = 8089;
+		api->use_pkce = g_key_file_get_integer(key_file, group, "use_pkce", NULL);
 	}
 
 	g_strfreev(groups);
@@ -411,6 +413,34 @@ static gchar *generate_state()
 	return str;
 }
 
+static gchar *generate_challenge(char* verifier)
+{
+	GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+	gsize *checksum_len = malloc(sizeof(gsize));
+	*checksum_len = 32; //sha256 is 32 bytes
+	guint8 *checksum_dest = malloc(*checksum_len);
+	gchar *str;
+	g_checksum_update(checksum, (const guchar*)verifier, strlen(verifier));
+	g_checksum_get_digest(checksum, checksum_dest, checksum_len);
+	g_checksum_free(checksum);
+	str = g_malloc(*checksum_len * 2 + 1);
+	base64_encode(str, checksum_dest, *checksum_len);
+	free(checksum_len);
+	free(checksum_dest);
+	/* convert to Base64 URL encoding */
+	for (int i = 0; str[i] != '\0'; i++) {
+		if (str[i] == '+')
+			str[i] = '-';
+		else if (str[i] == '/')
+			str[i] = '_';
+		else if (str[i] == '=') {
+			str[i] = '\0';
+			break;
+		}
+	}
+	return str;
+}
+
 int main(int argc, char *argv[])
 {
 	int ret = EXIT_SUCCESS;
@@ -428,6 +458,8 @@ int main(int argc, char *argv[])
 	gint i;
 	const gchar *address = NULL;
 	APIInfo *api;
+	gchar *code_challenge = NULL;
+	gchar *code_verifier = NULL;
 
 	key_file = g_key_file_new();
 	file = g_strconcat(get_rc_dir(), G_DIR_SEPARATOR_S, "oauth2.ini", NULL);
@@ -482,6 +514,15 @@ int main(int argc, char *argv[])
 	g_string_append_printf(auth_uri, "&state=%s", state);
 	g_string_append(auth_uri, "&access_type=offline");
 
+	if (api->use_pkce) {
+		g_string_append(auth_uri, "&code_challenge_method=S256");
+		code_verifier = generate_state();
+		debug_print("code_verifier =>%s<=\n",code_verifier);
+		code_challenge = generate_challenge(code_verifier);
+		debug_print("code_challenge =>%s<=\n",code_challenge);
+		g_string_append_printf(auth_uri, "&code_challenge=%s",code_challenge);
+		free(code_challenge);
+	}
 	debug_print("url: %s\n", auth_uri->str);
 	//chromium prints "Opening in existing browser session." on
 	//stdout, which must be prevented from appearing on this
@@ -513,6 +554,10 @@ int main(int argc, char *argv[])
 	tmp = curl_easy_escape(curl, api->redirect_uri, 0);
 	g_string_append_printf(req_body, "&redirect_uri=%s", tmp);
 	curl_free(tmp);
+	if (api->use_pkce) {
+		g_string_append_printf(req_body, "&code_verifier=%s",code_verifier);
+		free(code_verifier);
+	}
 	g_string_append(req_body, "&grant_type=authorization_code");
 	if (api->client_secret) {
 		tmp = curl_easy_escape(curl, api->client_secret, 0);
